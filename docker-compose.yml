@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: slotline
+      POSTGRES_PASSWORD: slotline
+      POSTGRES_DB: slotline
+    ports:
+      - "5432:5432"
+    # Extensions (btree_gist, citext) are created by Prisma's own migrations
+    # (see backend/prisma/schema.prisma's `extensions` list) — nothing to
+    # set up here.
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U slotline -d slotline"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Catches every outbound email locally instead of sending it, with a web UI
+  # to read what your app sent. Nothing to configure, nothing to pay for.
+  maildev:
+    image: maildev/maildev
+    restart: unless-stopped
+    ports:
+      - "1080:1080" # web UI — open this in a browser
+      - "1025:1025" # SMTP — point the app's mailer here in development
+
+volumes:
+  pgdata:

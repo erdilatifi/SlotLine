@@ -1,0 +1,339 @@
+@import "tailwindcss";
+
+/*
+ * One palette, marketing and product.
+ *
+ * Green, because in a booking product green already means "this time is
+ * free" — the accent and the thing it points at agree. It also puts real
+ * distance between this and the wall of violet and blue that every other
+ * SaaS front page uses.
+ *
+ * Neutrals are warmed very slightly (hue 95, a trace of chroma) so white
+ * reads as paper rather than as an unstyled background, and so the green
+ * sits on something rather than floating on a void.
+ */
+@theme {
+  --color-ink: oklch(0.2 0.018 155);
+  --color-ink-soft: oklch(0.44 0.014 155);
+
+  --color-accent: oklch(0.5 0.13 162);
+  --color-accent-bright: oklch(0.57 0.14 162);
+  --color-accent-soft: oklch(0.95 0.035 162);
+  --color-accent-deep: oklch(0.32 0.08 162);
+
+  --color-surface: oklch(1 0 0);
+  --color-surface-sunken: oklch(0.977 0.006 110);
+  --color-surface-raised: oklch(1 0 0);
+  --color-line: oklch(0.905 0.008 120);
+  --color-line-soft: oklch(0.95 0.006 120);
+  --color-muted: oklch(0.53 0.012 140);
+
+  --color-positive: oklch(0.55 0.14 155);
+  --color-warning: oklch(0.63 0.16 55);
+
+  /* Bricolage carries the headings — it has actual character where Inter
+     is deliberately neutral — and Inter does everything you have to read
+     rather than glance at. */
+  --font-display: "Bricolage Grotesque Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans:
+    "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Layered rather than blurred: a hairline plus a short shadow reads as a
+     real edge, where one big soft blur reads as a drop-shadow effect. */
+  --shadow-subtle: 0 1px 2px oklch(0.2 0.018 155 / 0.05);
+  --shadow-card: 0 1px 1px oklch(0.2 0.018 155 / 0.04), 0 3px 8px oklch(0.2 0.018 155 / 0.045);
+  --shadow-lift:
+    0 1px 2px oklch(0.2 0.018 155 / 0.05), 0 8px 20px oklch(0.2 0.018 155 / 0.08),
+    0 20px 40px oklch(0.2 0.018 155 / 0.05);
+  --shadow-float:
+    0 2px 4px oklch(0.2 0.018 155 / 0.06), 0 16px 32px oklch(0.2 0.018 155 / 0.1),
+    0 40px 80px oklch(0.2 0.018 155 / 0.08);
+
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+
+  /* The funnel animates with CSS rather than importing the animation
+     library — it's the conversion-critical path. Declared here because
+     Tailwind owns the `animate-*` namespace and would otherwise override
+     hand-written classes with an undefined value. */
+  --animate-rise: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-pop: pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  --animate-draw: draw 0.4s ease-out 0.25s forwards;
+  --animate-day-pop: day-pop 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+  --animate-sweep: sweep 5.5s ease-in-out infinite;
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+
+  @keyframes pop {
+    from {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+  }
+
+  @keyframes draw {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  @keyframes day-pop {
+    from {
+      transform: scale(0.82);
+    }
+    60% {
+      transform: scale(1.06);
+    }
+  }
+
+  @keyframes sweep {
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 0.75;
+    }
+  }
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Display face on headings only. Tightening tracking as size goes up is
+     what stops a large heading reading as loose and a small one as cramped. */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 600;
+  }
+
+  h1 {
+    letter-spacing: -0.035em;
+  }
+
+  h2 {
+    letter-spacing: -0.025em;
+  }
+
+  h3 {
+    letter-spacing: -0.015em;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: oklch(0.5 0.13 162 / 0.22);
+  }
+}
+
+@layer utilities {
+  /* One soft light source behind the hero product, not a full-bleed mesh.
+     Restraint is what separates this from the gradient-everywhere look. */
+  .glow-behind {
+    background-image: radial-gradient(
+      ellipse 55% 45% at 50% 40%,
+      oklch(0.5 0.13 162 / 0.16),
+      transparent 70%
+    );
+  }
+
+  .animate-draw {
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+  }
+
+  /* The rule wipes in from the left and out to the right, so the direction
+     carries the sense of the pointer passing through. */
+  .link-wipe {
+    position: relative;
+  }
+  .link-wipe::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    bottom: -3px;
+    height: 1px;
+    background: currentColor;
+    transform: scaleX(0);
+    transform-origin: right;
+    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .link-wipe:hover::after {
+    transform: scaleX(1);
+    transform-origin: left;
+  }
+
+  /* Time slots fill upward — the gesture matches what the click does, and
+     it stays legible when thirty of them animate in the same grid. */
+  .slot {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+  }
+  .slot::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--color-ink);
+    transform: translateY(101%);
+    transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .slot:hover::before,
+  .slot:focus-visible::before {
+    transform: translateY(0);
+  }
+
+  /* A hairline that draws across the top of a block on hover, left to
+     right, replacing the static divider already sitting there. */
+  .rule-draw {
+    position: relative;
+  }
+  .rule-draw::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    top: -1px;
+    height: 1px;
+    background: var(--color-accent-bright);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .rule-draw:hover::after {
+    transform: scaleX(1);
+  }
+
+  /* A single light pass across a solid button. Fires once per hover
+     rather than looping, which is the difference between a detail and a
+     distraction. */
+  .sheen {
+    position: relative;
+    overflow: hidden;
+  }
+  .sheen::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 45%;
+    left: -60%;
+    background: linear-gradient(100deg, transparent, oklch(0.5 0.13 162 / 0.18), transparent);
+    transition: left 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .sheen:hover::after {
+    left: 130%;
+  }
+
+  /* A soft light that tracks the pointer across a card. The coordinates
+     come from a pointermove handler on the grid, so one listener serves
+     every tile rather than one per card. */
+  .spotlight {
+    position: relative;
+    isolation: isolate;
+  }
+  .spotlight::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    opacity: 0;
+    pointer-events: none;
+    background: radial-gradient(
+      14rem circle at var(--spot-x, 50%) var(--spot-y, 50%),
+      oklch(0.5 0.13 162 / 0.13),
+      transparent 65%
+    );
+    transition: opacity 0.35s ease;
+  }
+  .spotlight:hover::before {
+    opacity: 1;
+  }
+
+  /* Draws itself on when it scrolls into view — used for the step icons,
+     where a line appearing reads as "this happens" better than a static
+     glyph does. */
+  .stroke-draw {
+    stroke-dasharray: var(--len, 40);
+    stroke-dashoffset: var(--len, 40);
+    transition: stroke-dashoffset 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .stroke-drawn {
+    stroke-dashoffset: 0;
+  }
+
+  /* Answers open by animating the row from zero to content height — the
+     only way to transition to an unknown height without measuring it. */
+  .reveal-grid {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .reveal-grid > * {
+    overflow: hidden;
+  }
+  .reveal-open {
+    grid-template-rows: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the fade, drop the travel — see components/motion.tsx. */
+  .animate-rise {
+    animation: fade-only 0.35s ease both;
+  }
+
+  .animate-pop,
+  .animate-draw {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+
+  @keyframes fade-only {
+    from {
+      opacity: 0;
+    }
+  }
+
+  .link-wipe::after,
+  .slot::before,
+  .rule-draw::after,
+  .sheen::after,
+  .spotlight::before,
+  .reveal-grid {
+    transition: none;
+  }
+
+  .stroke-draw {
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    transition: none;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
+}

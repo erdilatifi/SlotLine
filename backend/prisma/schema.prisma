@@ -1,0 +1,385 @@
+// Phase 1 migrates only Organization, User and Membership — the rest of the
+// target schema (docs/HANDBOOK_SUMMARY.md §3) is designed but not modeled
+// here yet, so it can't accidentally get migrated ahead of the phase that
+// needs it (see docs/build-plan.md).
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "cjs"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  // btree_gist isn't used until Phase 6 (the booking exclusion constraint),
+  // but it's declared here now so the extension list has one home.
+  extensions = [citext, btree_gist]
+}
+
+/// The tenant. Not "company", not "workspace" — see docs/HANDBOOK_SUMMARY.md §2.
+/// No "plan" column: the handbook's target schema has one, but it exists to
+/// gate paid tiers, and this app never charges (ADR-0002) — so it's omitted
+/// rather than modeled and ignored.
+model Organization {
+  id   String @id @default(uuid(7)) @db.Uuid
+  slug String @unique @db.Citext
+  name String @db.Text
+
+  /// IANA zone name (e.g. "Europe/Belgrade"), never a UTC offset — see ADR-0006.
+  timeZone String @db.Text
+
+  /// How much warning this business needs. A tattoo studio wanting two
+  /// weeks and a barber taking walk-ins are the same product with a
+  /// different number here.
+  minNoticeMinutes Int @default(0)
+
+  /// How far ahead the public page will offer. Past this, clients are
+  /// asked to come back later rather than shown a year of empty diary.
+  bookingHorizonDays Int @default(30)
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  memberships  Membership[]
+  services     Service[]
+  staffMembers StaffMember[]
+  clients      Client[]
+  bookings     Booking[]
+  auditLogs    AuditLog[]
+}
+
+/// A person who can authenticate. Not the same thing as a staff member — a
+/// staff member may exist with no login, and one User can belong to several
+/// organizations (docs/HANDBOOK_SUMMARY.md §2).
+model User {
+  id    String @id @default(uuid(7)) @db.Uuid
+  email String @unique @db.Citext
+
+  /// Argon2id hash. Null for accounts created through Google sign-in —
+  /// they genuinely have no password, which is different from having an
+  /// empty one, and login must refuse rather than compare against nothing.
+  passwordHash String? @db.Text
+
+  /// Set once we've seen this Google account. Google has already verified
+  /// the address, so those users skip our own email verification.
+  googleId String? @unique @db.Text
+
+  emailVerifiedAt DateTime? @db.Timestamptz
+
+  /// Encrypted at the application layer before it ever reaches this column.
+  mfaSecret String? @db.Text
+
+  memberships        Membership[]
+  refreshTokens      RefreshToken[]
+  verificationTokens VerificationToken[]
+}
+
+/// A rotating refresh token. Each use consumes it and issues a new one in
+/// the same family; replaying a consumed token means the family is
+/// compromised, so the whole family is revoked (handbook Ch. 6.2).
+model RefreshToken {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  userId     String    @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  familyId   String    @db.Uuid
+  tokenHash  String    @db.Text
+  expiresAt  DateTime  @db.Timestamptz
+  consumedAt DateTime? @db.Timestamptz
+  revokedAt  DateTime? @db.Timestamptz
+  createdAt  DateTime  @default(now()) @db.Timestamptz
+
+  @@index([familyId])
+}
+
+enum TokenPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+/// A one-shot token for email verification or password reset. Stored
+/// hashed, exactly like a password — see docs/HANDBOOK_SUMMARY.md §11.
+model VerificationToken {
+  id         String       @id @default(uuid(7)) @db.Uuid
+  userId     String       @db.Uuid
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose    TokenPurpose
+  tokenHash  String       @db.Text
+  expiresAt  DateTime     @db.Timestamptz
+  consumedAt DateTime?    @db.Timestamptz
+  createdAt  DateTime     @default(now()) @db.Timestamptz
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  STAFF
+}
+
+/// The join between a User and an Organization, carrying the role. A user
+/// with no membership row has no access to that organization — this table
+/// is where authorization starts (Phase 5).
+model Membership {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  role MembershipRole
+
+  @@unique([userId, organizationId])
+}
+
+/// Something bookable — "Men's cut, 30 min". Not "product".
+model Service {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name            String @db.Text
+  durationMin     Int
+  bufferBeforeMin Int    @default(0)
+  bufferAfterMin  Int    @default(0)
+
+  /// Integer minor units (e.g. cents) + ISO-4217 code — never a float,
+  /// even with no payments wired up (docs/HANDBOOK_SUMMARY.md §3).
+  priceMinor Int    @default(0)
+  currency   String @default("USD") @db.Text
+
+  capacity Int     @default(1)
+  isActive Boolean @default(true)
+
+  bookings Booking[]
+}
+
+/// A bookable person within an organization. Not a User — may have no
+/// login, and one User can staff several organizations.
+model StaffMember {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  userId      String? @db.Uuid
+  displayName String  @db.Text
+
+  /// Resolved most-specific-wins against the org's zone — see ADR-0007.
+  timeZone   String  @db.Text
+  isBookable Boolean @default(true)
+
+  scheduleRules      ScheduleRule[]
+  timeOff            TimeOff[]
+  bookings           Booking[]
+  calendarConnection CalendarConnection?
+}
+
+/// A recurring declaration of working hours in local wall-clock time — the
+/// same shape the availability engine (Phase 2) already takes as input.
+model ScheduleRule {
+  id            String      @id @default(uuid(7)) @db.Uuid
+  staffMemberId String      @db.Uuid
+  staffMember   StaffMember @relation(fields: [staffMemberId], references: [id], onDelete: Cascade)
+
+  /// 0 = Sunday .. 6 = Saturday — see backend/src/modules/scheduling/availability/zone.ts.
+  weekday Int
+
+  startHour   Int
+  startMinute Int
+  endHour     Int
+  endMinute   Int
+}
+
+model TimeOff {
+  id            String      @id @default(uuid(7)) @db.Uuid
+  staffMemberId String      @db.Uuid
+  staffMember   StaffMember @relation(fields: [staffMemberId], references: [id], onDelete: Cascade)
+
+  startsAt DateTime @db.Timestamptz
+  endsAt   DateTime @db.Timestamptz
+  reason   String?  @db.Text
+}
+
+/// The person being served. Scoped to one organization — the same human
+/// booking at two businesses is two Client records, and that's correct.
+model Client {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  email String  @db.Citext
+  name  String? @db.Text
+  phone String? @db.Text
+
+  bookings Booking[]
+
+  @@unique([organizationId, email])
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  NO_SHOW
+  CANCELLED
+  RESCHEDULED
+}
+
+/// A confirmed claim on a staff member's time range — the only entity with
+/// a state machine (docs/HANDBOOK_SUMMARY.md §2, §8). Invariant I1 (no two
+/// active bookings for one staff member overlap) is enforced below by a
+/// GiST exclusion constraint added via raw SQL in this model's migration —
+/// Prisma has no schema syntax for it, so the database is the source of
+/// truth here, not this file.
+model Booking {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  staffMemberId String      @db.Uuid
+  staffMember   StaffMember @relation(fields: [staffMemberId], references: [id], onDelete: Cascade)
+
+  serviceId String  @db.Uuid
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  clientId String @db.Uuid
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  startsAt DateTime      @db.Timestamptz
+  endsAt   DateTime      @db.Timestamptz
+  status   BookingStatus @default(CONFIRMED)
+
+  /// The zone the client saw when they booked — needed to render reminders
+  /// in their own local time later (docs/HANDBOOK_SUMMARY.md §5).
+  clientTimeZone String @db.Text
+
+  /// Client-generated, lets a retried request return the original result
+  /// instead of creating a duplicate booking (docs/HANDBOOK_SUMMARY.md §7).
+  idempotencyKey String @unique @db.Text
+
+  /// A capability URL: holding this token is the authorisation to manage
+  /// this one booking, so a guest can cancel or move their appointment
+  /// without an account (handbook Ch. 6.1). Unguessable, scoped to one
+  /// booking, and useless for anything else — which is why it can travel
+  /// in an email where a session token could not.
+  manageToken String? @unique @db.Text
+
+  /// Set when this booking was moved, pointing at the one that replaced
+  /// it, so the chain stays followable instead of looking like an
+  /// unexplained cancellation beside an unrelated new booking.
+  rescheduledToId String? @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  @@index([staffMemberId, startsAt])
+  @@index([organizationId, startsAt])
+}
+
+/// Append-only. Every booking state transition writes one of these in the
+/// same transaction — invariant I4.
+model AuditLog {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  actor  String @db.Text
+  action String @db.Text
+  entity String @db.Text
+  diff   Json?  @db.JsonB
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+}
+
+/// A short-lived claim on a time range, created while a client fills the
+/// booking form — occupies time exactly like a booking (handbook Ch. 8.4).
+/// Narrows the race window; the actual guarantee (I1) is the Booking
+/// table's own exclusion constraint, enforced regardless of whether a hold
+/// existed.
+model Hold {
+  id            String @id @default(uuid(7)) @db.Uuid
+  staffMemberId String @db.Uuid
+
+  startsAt  DateTime @db.Timestamptz
+  endsAt    DateTime @db.Timestamptz
+  expiresAt DateTime @db.Timestamptz
+
+  @@index([staffMemberId])
+}
+
+/// Written in the same transaction as the state change it describes, so
+/// the event is exactly as durable as the fact (handbook Ch. 10.1). A
+/// relay publishes unprocessed rows; nothing here is enqueued directly.
+model OutboxEvent {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  type        String   @db.Text
+  aggregateId String   @db.Uuid
+  payload     Json     @db.JsonB
+  createdAt   DateTime @default(now()) @db.Timestamptz
+
+  processedAt DateTime? @db.Timestamptz
+  attempts    Int       @default(0)
+  lastError   String?   @db.Text
+  /// Set once attempts are exhausted — the dead-letter queue, which is an
+  /// inbox to be watched, not a graveyard.
+  deadAt      DateTime? @db.Timestamptz
+
+  deliveries EmailDelivery[]
+
+  @@index([processedAt, deadAt])
+}
+
+/// One row per (event, recipient). The unique constraint is what makes
+/// consumers idempotent under at-least-once delivery — invariant I5.
+model EmailDelivery {
+  id        String      @id @default(uuid(7)) @db.Uuid
+  eventId   String      @db.Uuid
+  event     OutboxEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  recipient String      @db.Citext
+  subject   String      @db.Text
+  sentAt    DateTime    @default(now()) @db.Timestamptz
+
+  @@unique([eventId, recipient])
+}
+
+/// A staff member's link to an external calendar. The refresh token is
+/// encrypted at the application layer before it lands here (handbook Ch.
+/// 11.3), so a database dump alone doesn't hand over live calendar access.
+model CalendarConnection {
+  id            String      @id @default(uuid(7)) @db.Uuid
+  staffMemberId String      @unique @db.Uuid
+  staffMember   StaffMember @relation(fields: [staffMemberId], references: [id], onDelete: Cascade)
+
+  provider         String @default("google") @db.Text
+  googleCalendarId String @default("primary") @db.Text
+  /// AES-256-GCM, base64. Never the raw token.
+  refreshTokenEnc  String @db.Text
+
+  /// Cursor for incremental sync — we ask Google what changed since this,
+  /// never re-fetch everything.
+  syncToken String? @db.Text
+
+  /// Set when Google rejects our credentials (user revoked access). The
+  /// feature degrades; booking keeps working.
+  revokedAt DateTime? @db.Timestamptz
+  createdAt DateTime  @default(now()) @db.Timestamptz
+
+  mappings CalendarEventMapping[]
+}
+
+/// Pairs one of our bookings with the Google event we created for it.
+/// Without this (plus the origin tag we write onto the Google event), our
+/// own outbound writes come back through the inbound sync as "busy" blocks
+/// and the two systems notify each other forever (handbook Fig. 11.1).
+model CalendarEventMapping {
+  id           String             @id @default(uuid(7)) @db.Uuid
+  connectionId String             @db.Uuid
+  connection   CalendarConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  bookingId     String @db.Uuid
+  googleEventId String @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  @@unique([connectionId, bookingId])
+  @@index([googleEventId])
+}
