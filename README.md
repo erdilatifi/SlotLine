@@ -237,3 +237,11 @@ single API instance. Running more than one means moving them to Postgres
 **Rate limits** are 20 requests per 10s and 100 per minute globally, with
 creating a booking held to 10 per minute — that endpoint writes, sends mail and
 pushes to every open dashboard.
+
+---
+
+## License
+
+Copyright (c) 2026 Erdi Latifi.
+
+This project is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). You may use, study and modify it for personal, educational and other noncommercial purposes. Commercial use is not permitted without written permission from the author.
